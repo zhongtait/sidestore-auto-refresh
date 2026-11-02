@@ -41,6 +41,18 @@ struct LiveContainerRefreshPolicy {
         return true
     }
 
+    // LC_LAUNCH_REFRESH_POLICY_SIX_DAYS_V1
+    static func isLaunchRefreshDue(now: Date, lastSuccess: Date?, profileExpiration: Date?) -> Bool {
+        let sixDays: TimeInterval = 6 * 24 * 60 * 60
+        if let lastSuccess {
+            return now.timeIntervalSince(lastSuccess) >= sixDays
+        }
+        if let profileExpiration {
+            return profileExpiration.timeIntervalSince(now) <= 24 * 60 * 60
+        }
+        return false
+    }
+
     static func retryDelay(failureCount: Int) -> TimeInterval? {
         let delays: [TimeInterval] = [5 * 60, 20 * 60, 60 * 60]
         guard (1...delays.count).contains(failureCount) else { return nil }
