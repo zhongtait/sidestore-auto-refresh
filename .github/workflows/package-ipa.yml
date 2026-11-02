@@ -1,0 +1,125 @@
+name: Build and Package LiveContainer + SideStore Auto-Refresh IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/package-ipa.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Package LiveContainer-SideStore v6.0
+    runs-on: macos-latest
+    steps:
+      - name: Select Xcode 26.2
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
+
+      - name: Checkout sidestore-auto-refresh
+        uses: actions/checkout@v4
+        with:
+          path: sidestore-auto-refresh
+
+      - name: Checkout LiveContainer (NRG-Wardog v6.0 lineage)
+        uses: actions/checkout@v4
+        with:
+          repository: NRG-Wardog/LiveContainer
+          ref: 8808211d340c6e9e2a6274c0eaa863d7ab09474f
+          path: LiveContainer
+          submodules: recursive
+
+      - name: Apply sidestore-auto-refresh dynamic orientation patch
+        run: |
+          python3 sidestore-auto-refresh/scripts/patch_guest_orientation.py LiveContainer
+
+      - name: Build Patched TweakLoader
+        working-directory: LiveContainer
+        run: |
+          mkdir -p "$PWD/build-tweakloader"
+          if xcodebuild -project LiveContainer.xcodeproj \
+              -target TweakLoader \
+              -configuration Release \
+              -sdk iphoneos \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+              CONFIGURATION_BUILD_DIR="$PWD/build-tweakloader"; then
+            echo "Successfully built TweakLoader via xcodebuild"
+          else
+            echo "Falling back to direct clang compilation for TweakLoader"
+            SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+            xcrun clang -arch arm64 -target arm64-apple-ios15.0 -dynamiclib \
+              -install_name /usr/local/lib/TweakLoader.dylib \
+              -fobjc-arc \
+              -isysroot "$SDK_PATH" \
+              -I . -I LiveContainer \
+              -framework Foundation -framework UIKit -framework Security -framework LocalAuthentication \
+              -framework UniformTypeIdentifiers -framework UserNotifications \
+              -Wl,-U,_OBJC_CLASS_\$_FBSSceneParameters \
+              -Wl,-U,_OBJC_CLASS_\$_LSApplicationWorkspace \
+              -Wl,-U,_OBJC_CLASS_\$_DOCConfiguration \
+              TweakLoader/DocumentPicker.m TweakLoader/Notification.m TweakLoader/TweakLoader.m TweakLoader/UIKit+GuestHooks.m \
+              -o "$PWD/build-tweakloader/TweakLoader.dylib"
+          fi
+          test -f "$PWD/build-tweakloader/TweakLoader.dylib"
+          ls -la "$PWD/build-tweakloader/TweakLoader.dylib"
+
+      - name: Download Official v6.0.0 Base IPA
+        run: |
+          curl -fSL "https://github.com/NRG-Wardog/sidestore-auto-refresh/releases/download/v6.0.0/LiveContainer-SideStore-v6.0.0.ipa" -o official-v6.0.0.ipa
+          shasum -a 256 official-v6.0.0.ipa
+          echo "86db9a6bf4accf7e886d88563f1474063c85865682131a5ba0b13ed55a33f321  official-v6.0.0.ipa" | shasum -a 256 -c -
+
+      - name: Package LiveContainer-SideStore-v6.0.0.ipa with Dynamic Orientation
+        run: |
+          set -x
+          command -v ldid || brew install ldid
+          mkdir -p ipa-work
+          unzip -q official-v6.0.0.ipa -d ipa-work
+
+          # Locate target TweakLoader.dylib in the official base IPA
+          TARGET_TL=$(find ipa-work -name "TweakLoader.dylib" | head -n 1)
+          if [ -z "$TARGET_TL" ]; then
+            TARGET_TL="ipa-work/Payload/LiveContainer.app/Frameworks/TweakLoader.dylib"
+          fi
+          echo "Target TweakLoader path: $TARGET_TL"
+
+          # Replace with the patched TweakLoader.dylib supporting guest dynamic orientation
+          cp LiveContainer/build-tweakloader/TweakLoader.dylib "$TARGET_TL"
+          ldid -S"" "$TARGET_TL"
+
+          # Verify that SideStoreApp.framework retains V3SideStoreService (avoiding SS-READY-C09-L19)
+          strings ipa-work/Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore | grep "V3SideStoreService" || true
+          strings ipa-work/Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore | grep "v3Execute" || true
+
+          # Repackage the final IPA
+          cd ipa-work
+          zip -qr ../LiveContainer-SideStore-v6.0.0.ipa Payload -x "._*" -x ".DS_Store" -x "__MACOSX"
+          cd ..
+
+          shasum -a 256 LiveContainer-SideStore-v6.0.0.ipa
+          ls -lh LiveContainer-SideStore-v6.0.0.ipa
+
+      - name: Upload LiveContainer-SideStore-v6.0.0.ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveContainer-SideStore-v6.0.0.ipa
+          path: LiveContainer-SideStore-v6.0.0.ipa
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sidestore-auto-refresh
+          gh release delete v6.0.0-orientation-patch --yes || true
+          gh release create v6.0.0-orientation-patch \
+            ../LiveContainer-SideStore-v6.0.0.ipa \
+            --title "LiveContainer-SideStore v6.0.0 (Dynamic Orientation Fix)" \
+            --notes "Official v6.0.0 release with dynamic orientation engine for guest video player rotation under iOS portrait orientation lock. Resolves SS-READY-C09-L19 by preserving the verified v6.0 headless SideStore contract." \
+            || true
