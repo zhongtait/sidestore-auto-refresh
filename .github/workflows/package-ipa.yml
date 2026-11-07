@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: NRG-Wardog/LiveContainer
-          ref: 8808211d340c6e9e2a6274c0eaa863d7ab09474f
+          ref: 433dd73edd78401bc5d38eef87d51414bb30f6f4
           path: LiveContainer
           submodules: recursive
 
