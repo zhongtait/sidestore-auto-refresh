@@ -1940,7 +1940,10 @@ final class V3SideStoreStatusStore: ObservableObject {
     @discardableResult
     func accept(_ snapshot: [String: Any]) -> Bool {
         guard V3ServiceBridge.shared.statusReplyMayApply(snapshot) else {
-            _ = acceptRecoveryEvidence(snapshot)
+            if acceptRecoveryEvidence(snapshot) {
+                connected = true
+                return true
+            }
             return false
         }
         guard let incomingIdentityStamp = snapshot["identityStamp"] as? String,

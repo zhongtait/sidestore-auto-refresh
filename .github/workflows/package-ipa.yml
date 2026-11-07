@@ -39,6 +39,7 @@ jobs:
         run: |
           python3 sidestore-auto-refresh/scripts/patch_guest_orientation.py LiveContainer
           python3 sidestore-auto-refresh/scripts/patch_launch_refresh_policy.py LiveContainer
+          python3 sidestore-auto-refresh/scripts/patch_refresh_recovery_deadlock.py LiveContainer
 
       - name: Build Patched Components (TweakLoader & LiveContainerSwiftUI)
         working-directory: LiveContainer
@@ -128,6 +129,14 @@ jobs:
             ldid -S"" "$TARGET_SWIFTUI"
           fi
 
+          # Locate and replace target SideStoreSupport in the official base IPA
+          TARGET_SUPPORT=$(find ipa-work -name "SideStoreSupport" -type f | grep "SideStoreSupport.framework" | head -n 1)
+          if [ -n "$TARGET_SUPPORT" ] && [ -f LiveContainer/build-components/SideStoreSupport.framework/SideStoreSupport ]; then
+            echo "Target SideStoreSupport path: $TARGET_SUPPORT"
+            cp LiveContainer/build-components/SideStoreSupport.framework/SideStoreSupport "$TARGET_SUPPORT"
+            ldid -S"" "$TARGET_SUPPORT"
+          fi
+
           # Verify that SideStoreApp.framework retains V3SideStoreService (avoiding SS-READY-C09-L19)
           SIDESTORE_BIN="ipa-work/Payload/LiveContainer.app/Frameworks/SideStoreApp.framework/SideStore"
           SUPPORT_BIN="ipa-work/Payload/LiveContainer.app/Frameworks/SideStoreSupport.framework/SideStoreSupport"
@@ -165,11 +174,11 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" ../LiveContainer-SideStore-v6.0.0.ipa --clobber
             gh release edit "$RELEASE_TAG" \
-              --title "LiveContainer-SideStore v6.0.0 (Dynamic Orientation Fix)" \
-              --notes "Official v6.0.0 release with dynamic orientation engine for guest video player rotation under iOS portrait orientation lock. Resolves SS-READY-C09-L19 by preserving the verified v6.0 headless SideStore contract."
+              --title "LiveContainer-SideStore v6.0.0 (Orientation & Recovery Deadlock Fix)" \
+              --notes "Official v6.0.0 release with dynamic orientation engine for guest video player rotation, 6-day launch refresh guard, and recovery deadlock fix for interrupted/expired background refreshes."
           else
             gh release create "$RELEASE_TAG" \
               ../LiveContainer-SideStore-v6.0.0.ipa \
-              --title "LiveContainer-SideStore v6.0.0 (Dynamic Orientation Fix)" \
-              --notes "Official v6.0.0 release with dynamic orientation engine for guest video player rotation under iOS portrait orientation lock. Resolves SS-READY-C09-L19 by preserving the verified v6.0 headless SideStore contract."
+              --title "LiveContainer-SideStore v6.0.0 (Orientation & Recovery Deadlock Fix)" \
+              --notes "Official v6.0.0 release with dynamic orientation engine for guest video player rotation, 6-day launch refresh guard, and recovery deadlock fix for interrupted/expired background refreshes."
           fi

@@ -2555,8 +2555,9 @@ final class V3SideStoreService: NSObject {
             operationRecovery = nil; recoveryJournalUnreadable = true
             recoveryStorageFailure = V3RecoveryStorageFailure(.readFailure, underlying: error)
         }
+        let activeRefresh = (refreshAdmission.isActive && !refreshAdmission.ownerLost) || refreshExecutionGate.isActive
         let activeMutation = mutationID != nil || activeAuthenticationSessionID != nil ||
-            V3HeadlessRuntime.shared.operations.activeMutationID != nil || refreshAdmission.isActive || refreshExecutionGate.isActive
+            V3HeadlessRuntime.shared.operations.activeMutationID != nil || activeRefresh
         let provisioningState = V3HeadlessRuntime.shared.auth.provisioningCompletion.status(
             owner: credentialAppleID, identityStamp: identityStampAtStart, identityStable: identityReadStable,
             activeAccountPresent: activeAccount != nil, activeTeamPresent: team != nil,

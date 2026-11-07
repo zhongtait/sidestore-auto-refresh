@@ -510,15 +510,24 @@ public final class V3ServiceBridge {
         guard let ticket = reply["_v3StatusAuthorityTicket"] as? V3StatusWriteTicket else { return false }
         let busyValue: Bool?
         if ticket.kind == .snapshot {
+            let refreshLost: Bool = {
+                if let refresh = reply["refreshRecovery"] as? [String: Any],
+                   V3WireContract.strictBool(refresh["ownerLost"]) == true { return true }
+                if let opRec = reply["operationRecovery"] as? [String: Any],
+                   opRec["kind"] as? String == "refreshAll" { return true }
+                return false
+            }()
+            let rawActive = V3WireContract.strictBool(reply["activeMutation"])
+            let effectiveActiveMutation = refreshLost ? false : (rawActive == true)
             guard let typedBusy = V3WireContract.strictBool(reply["busy"]),
-                  V3WireContract.strictBool(reply["activeMutation"]) == false else { return false }
+                  effectiveActiveMutation == false else { return false }
             // These ownership facts are emitted on every current service
             // snapshot. Missing or malformed fields cannot authorize a commit.
-            guard V3WireContract.strictBool(reply["activeMutation"]) != nil,
+            guard rawActive != nil,
                   V3WireContract.strictBool(reply["recoveryHold"]) != nil else { return false }
             let recoveryOnly = V3RecoveryOnlySnapshotPolicy.mayApplyFullStatus(
                 busy: typedBusy,
-                activeMutation: V3WireContract.strictBool(reply["activeMutation"]) == true,
+                activeMutation: effectiveActiveMutation,
                 recoveryHold: V3WireContract.strictBool(reply["recoveryHold"]) == true,
                 hasTypedRecoveryEvidence: reply["operationRecovery"] != nil ||
                     reply["directRecovery"] != nil || reply["refreshRecovery"] != nil ||
@@ -537,8 +546,15 @@ public final class V3ServiceBridge {
         guard let ticket = reply["_v3StatusAuthorityTicket"] as? V3StatusWriteTicket,
               ticket.kind == .snapshot,
               let busy = V3WireContract.strictBool(reply["busy"]), busy else { return false }
+        let refreshLost: Bool = {
+            if let refresh = reply["refreshRecovery"] as? [String: Any],
+               V3WireContract.strictBool(refresh["ownerLost"]) == true { return true }
+            if let opRec = reply["operationRecovery"] as? [String: Any],
+               opRec["kind"] as? String == "refreshAll" { return true }
+            return false
+        }()
         let hasActiveMutationField = reply.keys.contains("activeMutation")
-        let activeMutation = V3WireContract.strictBool(reply["activeMutation"])
+        let activeMutation = refreshLost ? false : (V3WireContract.strictBool(reply["activeMutation"]) ?? true)
         guard hasActiveMutationField, activeMutation == false,
               V3WireContract.strictBool(reply["recoveryHold"]) == true,
               V3StatusRecoveryEvidencePolicy.mayApply(
