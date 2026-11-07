@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Build and Package LiveContainer-SideStore v6.0
+    name: Build and Package LiveContainer-SideStore v6.0.1
     runs-on: macos-latest
     steps:
       - name: Select Xcode 26.2
@@ -99,18 +99,18 @@ jobs:
           test -f "$PWD/build-components/LiveContainerSwiftUI.framework/LiveContainerSwiftUI"
           ls -la "$PWD/build-components/LiveContainerSwiftUI.framework/LiveContainerSwiftUI"
 
-      - name: Download Official v6.0.0 Base IPA
+      - name: Download Official v6.0.1 Base IPA
         run: |
-          curl -fSL "https://github.com/NRG-Wardog/sidestore-auto-refresh/releases/download/v6.0.0/LiveContainer-SideStore-v6.0.0.ipa" -o official-v6.0.0.ipa
-          shasum -a 256 official-v6.0.0.ipa
-          echo "86db9a6bf4accf7e886d88563f1474063c85865682131a5ba0b13ed55a33f321  official-v6.0.0.ipa" | shasum -a 256 -c -
+          curl -fSL "https://github.com/NRG-Wardog/sidestore-auto-refresh/releases/download/v6.0.1/LiveContainer-SideStore-v6.0.1.ipa" -o official-v6.0.1.ipa
+          shasum -a 256 official-v6.0.1.ipa
+          echo "eaca3f28b32b4a14acc0b1bf16237348f528de18a6eed37552b80d65fb9f84d3  official-v6.0.1.ipa" | shasum -a 256 -c -
 
-      - name: Package LiveContainer-SideStore-v6.0.0.ipa with Patches
+      - name: Package LiveContainer-SideStore-v6.0.1.ipa with Patches
         run: |
           set -euxo pipefail
           command -v ldid || brew install ldid
           mkdir -p ipa-work
-          unzip -q official-v6.0.0.ipa -d ipa-work
+          unzip -q official-v6.0.1.ipa -d ipa-work
 
           # Locate and replace target TweakLoader.dylib in the official base IPA
           TARGET_TL=$(find ipa-work -name "TweakLoader.dylib" | head -n 1)
@@ -151,17 +151,17 @@ jobs:
 
           # Repackage the final IPA
           cd ipa-work
-          zip -qr ../LiveContainer-SideStore-v6.0.0.ipa Payload -x "._*" -x ".DS_Store" -x "__MACOSX"
+          zip -qr ../LiveContainer-SideStore-v6.0.1.ipa Payload -x "._*" -x ".DS_Store" -x "__MACOSX"
           cd ..
 
-          shasum -a 256 LiveContainer-SideStore-v6.0.0.ipa
-          ls -lh LiveContainer-SideStore-v6.0.0.ipa
+          shasum -a 256 LiveContainer-SideStore-v6.0.1.ipa
+          ls -lh LiveContainer-SideStore-v6.0.1.ipa
 
-      - name: Upload LiveContainer-SideStore-v6.0.0.ipa
+      - name: Upload LiveContainer-SideStore-v6.0.1.ipa
         uses: actions/upload-artifact@v4
         with:
-          name: LiveContainer-SideStore-v6.0.0.ipa
-          path: LiveContainer-SideStore-v6.0.0.ipa
+          name: LiveContainer-SideStore-v6.0.1.ipa
+          path: LiveContainer-SideStore-v6.0.1.ipa
           retention-days: 30
 
       - name: Publish GitHub Release
@@ -170,15 +170,15 @@ jobs:
         run: |
           set -euo pipefail
           cd sidestore-auto-refresh
-          RELEASE_TAG="v6.0.0-orientation-patch"
+          RELEASE_TAG="v6.0.1-orientation-patch"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" ../LiveContainer-SideStore-v6.0.0.ipa --clobber
+            gh release upload "$RELEASE_TAG" ../LiveContainer-SideStore-v6.0.1.ipa --clobber
             gh release edit "$RELEASE_TAG" \
-              --title "LiveContainer-SideStore v6.0.0 (Orientation & Recovery Deadlock Fix)" \
-              --notes "Official v6.0.0 release with dynamic orientation engine for guest video player rotation, 6-day launch refresh guard, and recovery deadlock fix for interrupted/expired background refreshes."
+              --title "LiveContainer-SideStore v6.0.1 (Orientation & Recovery Deadlock Fix)" \
+              --notes "Official v6.0.1 release with dynamic orientation engine for guest video player rotation, 6-day launch refresh guard, and recovery deadlock fix for interrupted/expired background refreshes."
           else
             gh release create "$RELEASE_TAG" \
-              ../LiveContainer-SideStore-v6.0.0.ipa \
-              --title "LiveContainer-SideStore v6.0.0 (Orientation & Recovery Deadlock Fix)" \
-              --notes "Official v6.0.0 release with dynamic orientation engine for guest video player rotation, 6-day launch refresh guard, and recovery deadlock fix for interrupted/expired background refreshes."
+              ../LiveContainer-SideStore-v6.0.1.ipa \
+              --title "LiveContainer-SideStore v6.0.1 (Orientation & Recovery Deadlock Fix)" \
+              --notes "Official v6.0.1 release with dynamic orientation engine for guest video player rotation, 6-day launch refresh guard, and recovery deadlock fix for interrupted/expired background refreshes."
           fi
