@@ -506,20 +506,32 @@ public final class V3ServiceBridge {
     }
 
 
+    private static func isRefreshOwnerLost(_ reply: [String: Any]) -> Bool {
+        if let refresh = reply["refreshRecovery"] as? [String: Any],
+           V3WireContract.strictBool(refresh["ownerLost"]) == true { return true }
+        if let opRec = reply["operationRecovery"] as? [String: Any],
+           opRec["kind"] as? String == "refreshAll" { return true }
+        return false
+    }
+
     public func statusReplyMayApply(_ reply: [String: Any]) -> Bool {
         guard let ticket = reply["_v3StatusAuthorityTicket"] as? V3StatusWriteTicket else { return false }
         let busyValue: Bool?
         if ticket.kind == .snapshot {
+            let refreshLost = Self.isRefreshOwnerLost(reply)
+            let rawActive = V3WireContract.strictBool(reply["activeMutation"])
+            let effectiveActiveMutation = refreshLost ? false : (rawActive == true)
             guard let typedBusy = V3WireContract.strictBool(reply["busy"]),
-                  V3WireContract.strictBool(reply["activeMutation"]) == false else { return false }
+                  effectiveActiveMutation == false else { return false }
             // These ownership facts are emitted on every current service
             // snapshot. Missing or malformed fields cannot authorize a commit.
-            guard V3WireContract.strictBool(reply["activeMutation"]) != nil,
+            guard rawActive != nil,
                   V3WireContract.strictBool(reply["recoveryHold"]) != nil else { return false }
+            let effectiveRecoveryHold = V3WireContract.strictBool(reply["recoveryHold"]) == true || refreshLost
             let recoveryOnly = V3RecoveryOnlySnapshotPolicy.mayApplyFullStatus(
                 busy: typedBusy,
-                activeMutation: V3WireContract.strictBool(reply["activeMutation"]) == true,
-                recoveryHold: V3WireContract.strictBool(reply["recoveryHold"]) == true,
+                activeMutation: effectiveActiveMutation,
+                recoveryHold: effectiveRecoveryHold,
                 hasTypedRecoveryEvidence: reply["operationRecovery"] != nil ||
                     reply["directRecovery"] != nil || reply["refreshRecovery"] != nil ||
                     reply["recoveryStorageFailure"] != nil)
@@ -537,10 +549,12 @@ public final class V3ServiceBridge {
         guard let ticket = reply["_v3StatusAuthorityTicket"] as? V3StatusWriteTicket,
               ticket.kind == .snapshot,
               let busy = V3WireContract.strictBool(reply["busy"]), busy else { return false }
+        let refreshLost = Self.isRefreshOwnerLost(reply)
         let hasActiveMutationField = reply.keys.contains("activeMutation")
-        let activeMutation = V3WireContract.strictBool(reply["activeMutation"])
+        let activeMutation = refreshLost ? false : (V3WireContract.strictBool(reply["activeMutation"]) ?? true)
+        let effectiveRecoveryHold = V3WireContract.strictBool(reply["recoveryHold"]) == true || refreshLost
         guard hasActiveMutationField, activeMutation == false,
-              V3WireContract.strictBool(reply["recoveryHold"]) == true,
+              effectiveRecoveryHold,
               V3StatusRecoveryEvidencePolicy.mayApply(
                 busySnapshot: busy, activeMutation: activeMutation,
                 hasDurableRecoveryEvidence: V3StatusRecoveryEvidencePolicy.hasRecoveryEvidence(reply)) else {
@@ -549,6 +563,23 @@ public final class V3ServiceBridge {
         return V3StatusReplyCommitPolicy.mayApply(ticket, authority: statusWriteAuthority,
             currentServiceEpoch: statusWriteAuthority.serviceEpoch,
             currentServiceInstanceID: currentStatusServiceInstanceID)
+    }
+
+    @discardableResult
+    public func retireOrphanedRefreshServiceIfNeeded(_ reply: [String: Any]) -> Bool {
+        guard RefreshHandler.shared.v3RefreshToken == nil,
+              RefreshHandler.shared.v3RefreshAdmissionRunID == nil,
+              V3WireContract.strictBool(reply["recoveryHold"]) == true,
+              V3WireContract.strictBool(reply["recoveryJournalUnreadable"]) == false,
+              reply["operationRecovery"] == nil,
+              reply["directRecovery"] == nil,
+              reply["refreshRecovery"] == nil else {
+            return false
+        }
+        setHostRecoveryHold(false)
+        RefreshHandler.shared.v3_stopService()
+        disconnected()
+        return true
     }
 
     public func hasUncertainOperationSession(_ sessionID: String) -> Bool {

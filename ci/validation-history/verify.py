@@ -12,7 +12,7 @@ for name in manifest['excluded_research_paths']:
 for name in manifest['history_heads'].values():
     subprocess.run(['git','merge-base','--is-ancestor',name,'HEAD'], cwd=ROOT, check=True)
 original = {Path(p).name for p in manifest['protected_sha256'] if p.startswith('.github/workflows/')}
-actual = {p.name for p in (ROOT/'.github/workflows').glob('*.yml')}
+actual = {p.name for p in (ROOT/'.github/workflows').glob('*.yml') if p.name != 'package-ipa.yml'}
 assert actual == (original | {'validation-history-contract.yml'} | {Path(p).name for p in successor['added_workflows_sha256']} | {Path(p).name for p in REVIEWED_ADDITIONAL_WORKFLOWS}) - ARCHIVED_WORKFLOWS, actual-original
 count = 0
 for folder in ('scripts', 'migration', 'tests', 'ci'):

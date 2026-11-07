@@ -33,6 +33,9 @@ LIVE_CONTAINER_SCRIPTS = {
     "patch_guest_return.py",
     "patch_multitask_dock.py",
     "patch_dead10cc_fix.py",
+    "patch_guest_orientation.py",
+    "patch_launch_refresh_policy.py",
+    "patch_refresh_recovery_deadlock.py",
     "patch_combined_refresh_contract.py",
     "patch_combined_transport.py",
     "patch_combined_service_startup.py",
@@ -226,7 +229,7 @@ class RepositoryTests(unittest.TestCase):
         """
         for name in REQUIRED_SCRIPTS | {LIVE_CONTAINER_SCRIPT, LIVE_CONTAINER_STARTUP_SCRIPT,
                                         COMBINED_REFRESH_SCRIPT, EMBEDDED_KEYCHAIN_SCRIPT, "patch_combined_transport.py", "patch_refresh_result_bridge.py", APP_LAYOUT_SCRIPT, V3_UNIFIED_SHELL_SCRIPT,
-                                        "patch_sidesign_2fa_state.py"}:
+                                        "patch_sidesign_2fa_state.py", "patch_guest_orientation.py", "patch_launch_refresh_policy.py", "patch_refresh_recovery_deadlock.py"}:
             path = SCRIPTS / name
             ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         self.assertIn(
@@ -240,6 +243,18 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn(
             "if MARKER in text",
             (SCRIPTS / "patch_sidestore_integration.py").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "if MARKER in text",
+            (SCRIPTS / "patch_guest_orientation.py").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "if MARKER in text",
+            (SCRIPTS / "patch_launch_refresh_policy.py").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "if MARKER in text",
+            (SCRIPTS / "patch_refresh_recovery_deadlock.py").read_text(encoding="utf-8"),
         )
 
     def test_workflow_references_current_scripts(self):

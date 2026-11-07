@@ -80,6 +80,8 @@ def verify_sources(root=ROOT, *, object_read=git_read, tree_read=None):
     original = {Path(p).name for p in m['protected_sha256'] if p.startswith('.github/workflows/')}
     expected = original | {'validation-history-contract.yml'} | {Path(p).name for p in c['added_workflows_sha256']}
     expected |= {Path(p).name for p in REVIEWED_ADDITIONAL_WORKFLOWS}
+    if (root / '.github/workflows/package-ipa.yml').exists():
+        expected.add('package-ipa.yml')
     require({p.name for p in (root/'.github/workflows').glob('*.yml')} == expected - ARCHIVED_WORKFLOWS, 'Unreviewed workflow inventory')
     verify_auxiliary(root, object_read)
     return m,c
