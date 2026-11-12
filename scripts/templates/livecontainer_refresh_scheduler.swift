@@ -973,8 +973,17 @@ enum LiveContainerAutoRefreshScheduler {
             return
         }
         observeMissedDeadline(now: Date())
-        guard defaults.bool(forKey: enabledKey), defaults.object(forKey: earliestEligibleKey) != nil,
-              compactWorkIsDue(now: Date()) else { return }
+        guard defaults.bool(forKey: enabledKey) else { return }
+        let now = Date()
+        let lastSuccess = defaults.object(forKey: lastSuccessfulKey) as? Date
+        let profileExpiration: Date? = lastSuccess == nil ? (try? LiveContainerHostProfile.read(
+            at: Bundle.main.bundleURL.appendingPathComponent("embedded.mobileprovision"),
+            expectedBundleID: Bundle.main.bundleIdentifier ?? ""))?.expiration : nil
+        guard LiveContainerRefreshPolicy.isLaunchRefreshDue(
+            now: now,
+            lastSuccess: lastSuccess,
+            profileExpiration: profileExpiration
+        ), compactWorkIsDue(now: now) else { return }
         Task { @MainActor in await execute(source: "launch_or_resume") }
     }
 

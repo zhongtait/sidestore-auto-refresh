@@ -321,7 +321,7 @@ struct V3UnifiedTabs: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal, 12)
                 .padding(.top, 4)
-            } else if status.unresolvedRefreshRecoveryRunID != nil {
+            } else if status.unresolvedRefreshRecoveryRunID != nil && !status.isAutoReconcilingLostRefresh {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("A previous refresh may still be running")
                         .font(.subheadline.weight(.semibold))
@@ -1399,9 +1399,30 @@ final class V3SideStoreStatusStore: ObservableObject {
             recoverySessionID: record.sessionID)
     }
 
+    @Published private(set) var isAutoReconcilingLostRefresh = false
+
+    private func updateLocalHostRecoveryHold() {
+        let locallyUnresolved = unresolvedOperationRecovery != nil ||
+            unresolvedRefreshRecoveryRunID != nil || unresolvedRecoveryJournalUnreadable ||
+            unresolvedDirectRecovery != nil
+        V3ServiceBridge.shared.setHostRecoveryHold(locallyUnresolved)
+    }
+
+    private func clearReconciledRefreshState(runID: String) {
+        unresolvedRefreshRecoveryRunID = nil
+        updateLocalHostRecoveryHold()
+        let uncertainKey = "liveContainerAutoRefreshUncertainMutationRunID"
+        if let defaults = V3SharedAppGroup.sharedUserDefaults(),
+           defaults.string(forKey: uncertainKey) == runID {
+            defaults.removeObject(forKey: uncertainKey)
+        }
+        V3ServiceBridge.shared.retireReconciledRefreshService(runID: runID)
+    }
+
     func reconcileLostRefreshAfterDeviceCheck() {
-        guard let runID = unresolvedRefreshRecoveryRunID else { return }
-        Task {
+        guard let runID = unresolvedRefreshRecoveryRunID, !isAutoReconcilingLostRefresh else { return }
+        isAutoReconcilingLostRefresh = true
+        Task { @MainActor in
             do {
                 let reply = try await V3ServiceBridge.shared.request(operation: "refreshAdmissionReconcile",
                     target: runID, payload: ["userConfirmed": true])
@@ -1411,12 +1432,51 @@ final class V3SideStoreStatusStore: ObservableObject {
                     throw CombinedFailure(operation: "refresh", stage: .command,
                         code: .staleResult, id: runID, retryable: false)
                 }
-                V3ServiceBridge.shared.retireReconciledRefreshService(runID: runID)
-                unresolvedRefreshRecoveryRunID = nil
+                clearReconciledRefreshState(runID: runID)
                 notice = "The refresh hold was cleared after your device check."
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                try? await V3ServiceBridge.shared.connect()
+                isAutoReconcilingLostRefresh = false
                 reload()
             } catch {
+                isAutoReconcilingLostRefresh = false
                 self.error = "SideStore could not clear the refresh hold. Reconnect and try again." + "\nError ID: SS-VERIFY-D003"
+            }
+        }
+    }
+
+    private func autoRestartOrphanedRefreshService() {
+        guard !isAutoReconcilingLostRefresh else { return }
+        isAutoReconcilingLostRefresh = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            try? await V3ServiceBridge.shared.connect()
+            isAutoReconcilingLostRefresh = false
+            reload()
+        }
+    }
+
+    private func autoReconcileLostRefresh(runID: String) {
+        guard !isAutoReconcilingLostRefresh else { return }
+        isAutoReconcilingLostRefresh = true
+        Task { @MainActor in
+            do {
+                let reply = try await V3ServiceBridge.shared.request(operation: "refreshAdmissionReconcile",
+                    target: runID, payload: ["userConfirmed": true])
+                guard reply["runID"] as? String == runID,
+                      V3ServiceBridge.strictBool(reply["released"]) == true,
+                      V3ServiceBridge.strictBool(reply["reconciled"]) == true else {
+                    isAutoReconcilingLostRefresh = false
+                    return
+                }
+                clearReconciledRefreshState(runID: runID)
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                try? await V3ServiceBridge.shared.connect()
+                isAutoReconcilingLostRefresh = false
+                reload()
+            } catch {
+                // If silent auto-reconcile fails, unresolvedRefreshRecoveryRunID remains for manual retry
+                isAutoReconcilingLostRefresh = false
             }
         }
     }
@@ -1850,10 +1910,12 @@ final class V3SideStoreStatusStore: ObservableObject {
             if rejectedAsStale {
                 rejectedAsStale = true
             } else if V3SnapshotErrorPolicy.shouldMarkDisconnected(error) {
-                connected = false
-                invalidateSetupFacts()
-                requiresConnectionRetry = true
-                present(error)
+                if !isAutoReconcilingLostRefresh {
+                    connected = false
+                    invalidateSetupFacts()
+                    requiresConnectionRetry = true
+                    present(error)
+                }
             } else {
                 cancelled = true
             }
@@ -1940,7 +2002,13 @@ final class V3SideStoreStatusStore: ObservableObject {
     @discardableResult
     func accept(_ snapshot: [String: Any]) -> Bool {
         guard V3ServiceBridge.shared.statusReplyMayApply(snapshot) else {
-            _ = acceptRecoveryEvidence(snapshot)
+            if acceptRecoveryEvidence(snapshot) {
+                connected = true
+                return true
+            }
+            if V3ServiceBridge.shared.retireOrphanedRefreshServiceIfNeeded(snapshot) {
+                autoRestartOrphanedRefreshService()
+            }
             return false
         }
         guard let incomingIdentityStamp = snapshot["identityStamp"] as? String,
@@ -1998,7 +2066,10 @@ final class V3SideStoreStatusStore: ObservableObject {
            let runID = refresh["runID"] as? String,
            let ownerLost = V3ServiceBridge.strictBool(refresh["ownerLost"]),
            UUID(uuidString: runID)?.uuidString == runID {
-            if ownerLost { unresolvedRefreshRecoveryRunID = runID }
+            if ownerLost {
+                unresolvedRefreshRecoveryRunID = runID
+                autoReconcileLostRefresh(runID: runID)
+            }
             foundValidEvidence = true
         } else if snapshot.keys.contains("refreshRecovery") {
             unresolvedRefreshRecoveryRunID = nil
@@ -2090,6 +2161,9 @@ final class V3SideStoreStatusStore: ObservableObject {
            UUID(uuidString: runID)?.uuidString == runID {
             unresolvedRefreshRecoveryRunID = ownerLost ? runID : nil
             foundValidEvidence = true
+            if ownerLost {
+                autoReconcileLostRefresh(runID: runID)
+            }
         } else {
             unresolvedRefreshRecoveryRunID = nil
             if snapshot.keys.contains("refreshRecovery") { unreadable = true }
